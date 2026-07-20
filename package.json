@@ -14,7 +14,12 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "eslint src/ --ext .ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "mcp": "node dist/mcp/cli.js",
+    "mcp:dev": "tsx src/mcp/cli.ts"
+  },
+  "bin": {
+    "sail-mem-mcp": "dist/mcp/cli.js"
   },
   "repository": {
     "type": "git",
@@ -25,7 +30,8 @@
     "agent",
     "ai",
     "knowledge-graph",
-    "embeddings"
+    "embeddings",
+    "mcp"
   ],
   "author": "",
   "license": "MIT",

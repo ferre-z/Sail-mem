@@ -82,6 +82,15 @@ export type { DecayResult } from './core/decay.js';
 export { stripSecrets, stripSecretsWithTrace, SECRET_PATTERNS } from './capture/privacy-filter.js';
 export type { StripResult } from './capture/privacy-filter.js';
 
+// MCP server (industry-standard agent tool surface)
+export {
+  SailMemMcpServer,
+  createMcpServer,
+  VALID_MEMORY_TYPES,
+  VALID_RECENT,
+} from './mcp/server.js';
+export type { McpServerOptions } from './mcp/server.js';
+
 // Storage
 export type {
   IStorage,
