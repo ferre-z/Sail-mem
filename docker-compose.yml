@@ -1,0 +1,43 @@
+services:
+  sail-mem:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: sail-mem:latest
+    container_name: sail-mem
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      SAIL_MEM_STORAGE: ${SAIL_MEM_STORAGE:-sqlite}
+      SAIL_MEM_SQLITE_PATH: ${SAIL_MEM_SQLITE_PATH:-/data/sail-mem.db}
+      DATABASE_URL: ${DATABASE_URL:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    ports:
+      - "${SAIL_MEM_PORT:-3000}:3000"
+    volumes:
+      - sail-mem-data:/data
+    stdin_open: true
+    tty: true
+
+  postgres:
+    image: pgvector/pgvector:pg17
+    container_name: sail-mem-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: sail_mem
+      POSTGRES_USER: sail
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-sail}
+    volumes:
+      - sail-mem-pgdata:/var/lib/postgresql/data
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sail -d sail_mem"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  sail-mem-data:
+  sail-mem-pgdata:
