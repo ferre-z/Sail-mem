@@ -6,6 +6,25 @@ import { LocalEmbedder } from '../embeddings/local.js';
 import { getConfig } from '../config/index.js';
 import { Memory, Observation } from '../types/memory.js';
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function assertValidBankId(bankId: string): void {
+  if (!UUID_RE.test(bankId)) {
+    throw new Error(`Invalid bankId: ${bankId}`);
+  }
+}
+
+function assertSameBank(memories: Memory[], bankId: string): void {
+  for (const m of memories) {
+    if (m.bankId !== bankId) {
+      throw new Error(
+        `Memory ${m.id} belongs to bank ${m.bankId}, not ${bankId}. ` +
+        `Cross-bank consolidation is not permitted.`
+      );
+    }
+  }
+}
+
 export class ConsolidationEngine {
   private db = getDb();
   private memoryStore: MemoryStore;
@@ -25,6 +44,10 @@ export class ConsolidationEngine {
     content: string,
     threshold = getConfig().consolidation.similarityThreshold
   ): Promise<Memory[]> {
+    assertValidBankId(bankId);
+    if (!content || content.trim().length === 0) {
+      return [];
+    }
     const embedding = await this.embedder.embed(content);
 
     const results = await this.db.execute(sql`
@@ -41,17 +64,21 @@ export class ConsolidationEngine {
   }
 
   async consolidate(bankId: string, memoryIds: string[]): Promise<Observation> {
+    assertValidBankId(bankId);
+    if (!Array.isArray(memoryIds) || memoryIds.length === 0) {
+      throw new Error('memoryIds must be a non-empty array');
+    }
+
     const memories = await Promise.all(memoryIds.map((id) => this.memoryStore.getById(id)));
 
     const validMemories = memories.filter(Boolean) as Memory[];
     if (validMemories.length === 0) {
       throw new Error('No valid memories found for consolidation');
     }
+    assertSameBank(validMemories, bankId);
 
-    // Generate consolidated content
     const consolidatedContent = this.generateConsolidatedContent(validMemories);
 
-    // Create observation
     const observation = await this.memoryStore.create({
       bankId,
       type: 'observation',
@@ -65,7 +92,6 @@ export class ConsolidationEngine {
       },
     });
 
-    // Track consolidation
     await this.db.insert(consolidations).values({
       observationId: observation.id,
       sourceMemoryIds: memoryIds,
@@ -79,29 +105,51 @@ export class ConsolidationEngine {
     bankId: string,
     evidence: Array<{ memoryId: string; quote: string }>
   ): Promise<Observation> {
-    const consolidatedContent = evidence.map((e) => e.quote).join('. ');
+    assertValidBankId(bankId);
+    if (!Array.isArray(evidence) || evidence.length === 0) {
+      throw new Error('evidence must be a non-empty array');
+    }
+
+    const validMemories = (
+      await Promise.all(evidence.map((e) => this.memoryStore.getById(e.memoryId)))
+    ).filter(Boolean) as Memory[];
+    assertSameBank(validMemories, bankId);
+
+    const evidenceFromMemories = validMemories.map((m) => ({
+      memoryId: m.id,
+      quote: m.content,
+    }));
+
+    const consolidatedContent = evidenceFromMemories
+      .map((e) => e.quote)
+      .filter((q) => q && q.trim().length > 0)
+      .join('. ');
+
+    if (consolidatedContent.length === 0) {
+      throw new Error('Cannot consolidate memories with empty content');
+    }
 
     const observation = await this.memoryStore.create({
       bankId,
       type: 'observation',
       content: consolidatedContent,
       metadata: {
-        consolidatedFrom: evidence.map((e) => e.memoryId),
-        evidence,
+        consolidatedFrom: evidenceFromMemories.map((e) => e.memoryId),
+        evidence: evidenceFromMemories,
       },
     });
 
     await this.db.insert(consolidations).values({
       observationId: observation.id,
-      sourceMemoryIds: evidence.map((e) => e.memoryId),
-      evidenceCount: evidence.length,
+      sourceMemoryIds: evidenceFromMemories.map((e) => e.memoryId),
+      evidenceCount: evidenceFromMemories.length,
     });
 
     return observation as Observation;
   }
 
   async findConsolidationCandidates(bankId: string): Promise<Memory[][]> {
-    // Find clusters of similar memories
+    assertValidBankId(bankId);
     const allMemories = await this.memoryStore.listByBank(bankId, 1000);
     const clusters: Memory[][] = [];
     const processed = new Set<string>();
@@ -122,10 +170,16 @@ export class ConsolidationEngine {
   }
 
   private generateConsolidatedContent(memories: Memory[]): string {
-    // Simple consolidation: combine unique facts
-    const facts = memories.map((m) => m.content);
+    if (memories.length === 0) return '';
+
+    const facts = memories.map((m) => m.content).filter((c) => c && c.trim().length > 0);
     const unique = [...new Set(facts)];
-    return unique.join('. ');
+    const content = unique.join('. ');
+
+    if (content.length > 10_000) {
+      return content.slice(0, 10_000) + '...';
+    }
+    return content;
   }
 
   private mapToMemory(row: any): Memory {
