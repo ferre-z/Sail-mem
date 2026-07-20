@@ -130,6 +130,19 @@ export type {
   TieredCompressionResult,
 } from './core/tiered-consolidation.js';
 
+// Telemetry
+export {
+  ConsoleLogger,
+  NoopLogger,
+  NoopMetrics,
+} from './telemetry/logger.js';
+export type {
+  Logger,
+  LogLevel,
+  LogMeta,
+  MetricsCollector,
+} from './telemetry/logger.js';
+
 // MCP server (industry-standard agent tool surface)
 export {
   SailMemMcpServer,
