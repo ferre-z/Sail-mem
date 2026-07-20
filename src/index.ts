@@ -56,3 +56,26 @@ export {
   SyncError,
   NotFoundError,
 } from './errors.js';
+
+// Storage
+export type {
+  IStorage,
+  StorageProvider,
+  ScoredMemory,
+  SemanticSearchOptions,
+  FullTextSearchOptions,
+  MemoryStat,
+  EntityRecord,
+  RelationshipRecord,
+  CreateEntityInput,
+  CreateRelationshipInput,
+} from './storage/types.js';
+export { SQLiteStorage } from './storage/sqlite.js';
+export { PostgresStorage } from './storage/postgres.js';
+export type { PostgresStorageDeps, DrizzleDB } from './storage/postgres.js';
+export {
+  createStorage,
+  closeStorage,
+  resetStorageCache,
+} from './storage/factory.js';
+export type { StorageFactoryOptions } from './storage/factory.js';

@@ -34,11 +34,16 @@
   },
   "homepage": "https://github.com/ferre-z/Sail-mem#readme",
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@xenova/transformers": "^2.17.2",
+    "better-sqlite3": "^12.11.1",
     "drizzle-orm": "^0.45.2",
-    "postgres": "^3.4.9"
+    "postgres": "^3.4.9",
+    "ts-fsrs": "^5.4.1",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^26.1.1",
     "@types/pg": "^8.20.0",
     "drizzle-kit": "^0.31.10",
