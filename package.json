@@ -1,0 +1,48 @@
+{
+  "name": "sail-mem",
+  "version": "0.1.0",
+  "description": "Memory engine for agents - TypeScript-based personal brain with hierarchical banks, knowledge graphs, and GitHub sync",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx watch src/index.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint src/ --ext .ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ferre-z/Sail-mem.git"
+  },
+  "keywords": [
+    "memory",
+    "agent",
+    "ai",
+    "knowledge-graph",
+    "embeddings"
+  ],
+  "author": "",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/ferre-z/Sail-mem/issues"
+  },
+  "homepage": "https://github.com/ferre-z/Sail-mem#readme",
+  "dependencies": {
+    "@xenova/transformers": "^2.17.2",
+    "drizzle-orm": "^0.45.2",
+    "postgres": "^3.4.9"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.1",
+    "@types/pg": "^8.20.0",
+    "drizzle-kit": "^0.31.10",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  }
+}
