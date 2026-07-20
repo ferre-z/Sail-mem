@@ -82,6 +82,28 @@ export type { DecayResult } from './core/decay.js';
 export { stripSecrets, stripSecretsWithTrace, SECRET_PATTERNS } from './capture/privacy-filter.js';
 export type { StripResult } from './capture/privacy-filter.js';
 
+// Auto-capture hooks
+export type {
+  SessionHooks,
+  SessionContext,
+  ToolContext,
+  PromptContext,
+  ResponseContext,
+  ToolResult,
+} from './capture/hooks.js';
+export { MemoryCapturer } from './capture/memory-capturer.js';
+export type {
+  MemoryCapturerOptions,
+  CaptureFilter,
+} from './capture/memory-capturer.js';
+
+// Auto-consolidation scheduler
+export { ConsolidationScheduler } from './core/consolidation-scheduler.js';
+export type {
+  SchedulerOptions,
+  CycleResult,
+} from './core/consolidation-scheduler.js';
+
 // MCP server (industry-standard agent tool surface)
 export {
   SailMemMcpServer,

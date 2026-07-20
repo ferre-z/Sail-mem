@@ -49,6 +49,8 @@ export interface MemoryMetadata {
   evidenceIds?: string[];
   contradictingIds?: string[];
   lastUpdated?: Date;
+  /** auto-capture metadata */
+  sessionId?: string;
   /** consolidation freshness */
   freshness?: 'new' | 'strengthening' | 'stable' | 'weakening' | 'stale';
   evidenceCount?: number;
