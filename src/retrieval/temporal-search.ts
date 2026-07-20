@@ -1,4 +1,4 @@
-import { sql } from 'drizzle-orm';
+import { sql, SQL } from 'drizzle-orm';
 import { getDb } from '../db/connection.js';
 import { SearchResult } from './search-engine.js';
 
@@ -8,8 +8,7 @@ export class TemporalSearch {
   async initialize(): Promise<void> {}
 
   async search(bankId: string, query: string, limit: number): Promise<SearchResult[]> {
-    // Parse temporal expressions from query
-    const temporalFilter = this.parseTemporalQuery(query);
+    const temporalCondition = this.parseTemporalCondition(query);
 
     const results = await this.db.execute(sql`
       SELECT *,
@@ -22,7 +21,7 @@ export class TemporalSearch {
         END as temporal_score
       FROM memories
       WHERE bank_id = ${bankId}
-        ${sql.raw(temporalFilter)}
+        ${temporalCondition}
       ORDER BY temporal_score DESC, created_at DESC
       LIMIT ${limit}
     `);
@@ -31,27 +30,27 @@ export class TemporalSearch {
       memory: this.mapToMemory(row),
       score: row.temporal_score,
       strategy: 'temporal',
-      metadata: { parsedTemporal: temporalFilter },
+      metadata: { parsedTemporal: Boolean(temporalCondition) },
     }));
   }
 
-  private parseTemporalQuery(query: string): string {
+  private parseTemporalCondition(query: string): SQL | undefined {
     const lowerQuery = query.toLowerCase();
 
     if (lowerQuery.includes('today') || lowerQuery.includes('recent')) {
-      return "AND created_at > NOW() - INTERVAL '1 day'";
+      return sql`AND created_at > NOW() - INTERVAL '1 day'`;
     }
     if (lowerQuery.includes('this week') || lowerQuery.includes('last week')) {
-      return "AND created_at > NOW() - INTERVAL '1 week'";
+      return sql`AND created_at > NOW() - INTERVAL '1 week'`;
     }
     if (lowerQuery.includes('this month') || lowerQuery.includes('last month')) {
-      return "AND created_at > NOW() - INTERVAL '1 month'";
+      return sql`AND created_at > NOW() - INTERVAL '1 month'`;
     }
     if (lowerQuery.includes('this year') || lowerQuery.includes('last year')) {
-      return "AND created_at > NOW() - INTERVAL '1 year'";
+      return sql`AND created_at > NOW() - INTERVAL '1 year'`;
     }
 
-    return '';
+    return undefined;
   }
 
   private mapToMemory(row: any): any {
