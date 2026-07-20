@@ -33,3 +33,13 @@ export type { Entity, Relationship, ConnectedEntity } from './graph/knowledge-gr
 export { GitHubSync } from './sync/github-sync.js';
 export { createSnapshot, validateSnapshot } from './sync/snapshot.js';
 export type { MemorySnapshot } from './sync/snapshot.js';
+
+// Errors
+export {
+  SailMemError,
+  ValidationError,
+  StorageError,
+  EmbeddingError,
+  SyncError,
+  NotFoundError,
+} from './errors.js';
