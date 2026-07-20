@@ -1,27 +1,20 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { MemoryStore } from '../../src/core/memory-store.js';
-import { BankManager } from '../../src/core/bank-manager.js';
-import { configure, resetConfig } from '../../src/config/index.js';
+import { MemoryStore } from '../../src/core/memory-store.ts';
+import { BankManager } from '../../src/core/bank-manager.ts';
+import { SQLiteStorage } from '../../src/storage/sqlite.ts';
+import { ValidationError } from '../../src/errors.ts';
 
-describe('MemoryStore', () => {
+describe('MemoryStore (integration, SQLite)', () => {
   let store: MemoryStore;
   let bankManager: BankManager;
   let testBankId: string;
+  let storage: SQLiteStorage;
 
   beforeAll(async () => {
-    configure({
-      database: {
-        host: 'localhost',
-        port: 5432,
-        database: 'sail_mem_test',
-        user: 'postgres',
-        password: '',
-      },
-    });
-    store = new MemoryStore();
-    bankManager = new BankManager();
-
-    // Create a test bank
+    storage = new SQLiteStorage({ path: ':memory:' });
+    await storage.initialize();
+    store = new MemoryStore({ storage });
+    bankManager = new BankManager({ storage });
     const bank = await bankManager.create({
       name: 'test-bank',
       level: 'global',
@@ -30,7 +23,7 @@ describe('MemoryStore', () => {
   });
 
   afterAll(async () => {
-    resetConfig();
+    await storage.close();
   });
 
   it('should create a memory', async () => {
@@ -84,6 +77,16 @@ describe('MemoryStore', () => {
     expect(retrieved).toBeNull();
   });
 
+  it('should reject empty content', async () => {
+    await expect(
+      store.create({
+        bankId: testBankId,
+        type: 'world_fact',
+        content: '',
+      })
+    ).rejects.toThrow(ValidationError);
+  });
+
   it('should list memories by bank', async () => {
     await store.create({
       bankId: testBankId,
@@ -101,24 +104,18 @@ describe('MemoryStore', () => {
   });
 });
 
-describe('BankManager', () => {
+describe('BankManager (integration, SQLite)', () => {
   let manager: BankManager;
+  let storage: SQLiteStorage;
 
   beforeAll(async () => {
-    configure({
-      database: {
-        host: 'localhost',
-        port: 5432,
-        database: 'sail_mem_test',
-        user: 'postgres',
-        password: '',
-      },
-    });
-    manager = new BankManager();
+    storage = new SQLiteStorage({ path: ':memory:' });
+    await storage.initialize();
+    manager = new BankManager({ storage });
   });
 
   afterAll(async () => {
-    resetConfig();
+    await storage.close();
   });
 
   it('should create a global bank', async () => {

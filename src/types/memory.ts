@@ -1,5 +1,7 @@
 import { MemoryType, MemoryMetadata } from '../db/schema.js';
 
+export type MemoryTypeValue = MemoryType;
+
 export interface Memory {
   id: string;
   bankId: string;
@@ -47,4 +49,15 @@ export interface Observation extends Memory {
 
 export interface MentalModel extends Memory {
   type: 'mental_model';
+}
+
+export interface Opinion extends Memory {
+  type: 'opinion';
+  metadata: MemoryMetadata & {
+    targetEntity: string;
+    confidence: number;
+    evidenceIds: string[];
+    contradictingIds?: string[];
+    lastUpdated: Date;
+  };
 }

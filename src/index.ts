@@ -18,6 +18,14 @@ export { BankManager } from './core/bank-manager.js';
 export type { BankManagerDeps } from './core/bank-manager.js';
 export { ConsolidationEngine } from './core/consolidation.js';
 export type { ConsolidationEngineDeps } from './core/consolidation.js';
+export {
+  OpinionEngine,
+} from './core/opinion-engine.js';
+export type {
+  OpinionEngineDeps,
+  FormOpinionInput,
+  ContradictionResolution,
+} from './core/opinion-engine.js';
 
 // Retrieval
 export { SearchEngine } from './retrieval/search-engine.js';
@@ -56,6 +64,23 @@ export {
   SyncError,
   NotFoundError,
 } from './errors.js';
+
+// Decay (Ebbinghaus / FSRS-flavoured scoring)
+export {
+  ebbinghausRetention,
+  applyAccessBoost,
+  calculateMemoryScore,
+  classifyMemoryType,
+  scoreBatch,
+  DEFAULT_DECAY_RATES,
+  DEFAULT_ACCESS_BOOST_CAP,
+  ACCESS_BOOST_FACTOR,
+} from './core/decay.js';
+export type { DecayResult } from './core/decay.js';
+
+// Privacy filter
+export { stripSecrets, stripSecretsWithTrace, SECRET_PATTERNS } from './capture/privacy-filter.js';
+export type { StripResult } from './capture/privacy-filter.js';
 
 // Storage
 export type {

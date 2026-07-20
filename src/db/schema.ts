@@ -16,6 +16,7 @@ export const memoryTypeEnum = [
   'experience_fact',
   'observation',
   'mental_model',
+  'opinion',
 ] as const;
 export type MemoryType = (typeof memoryTypeEnum)[number];
 
@@ -43,6 +44,14 @@ export interface MemoryMetadata {
   };
   consolidatedFrom?: string[];
   evidence?: Array<{ memoryId: string; quote: string }>;
+  /** opinion-specific */
+  targetEntity?: string;
+  evidenceIds?: string[];
+  contradictingIds?: string[];
+  lastUpdated?: Date;
+  /** consolidation freshness */
+  freshness?: 'new' | 'strengthening' | 'stable' | 'weakening' | 'stale';
+  evidenceCount?: number;
 }
 
 // Memory banks with hierarchical structure

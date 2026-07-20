@@ -129,7 +129,7 @@ export class KnowledgeGraph {
     const safeDepth = Math.max(1, Math.min(maxDepth, 12));
     const storage = await this.useStorage();
 
-    const queue: Array<{ entityId: string; path: string[]; rels: string[] }> = [
+    const queue: Array<{ entityId: string; path: string[]; rels: Relationship[] }> = [
       { entityId: sourceId, path: [sourceId], rels: [] },
     ];
     const visited = new Set<string>([sourceId]);
@@ -141,13 +141,9 @@ export class KnowledgeGraph {
         const entities = (
           await Promise.all(current.path.map((id) => storage.getEntity(id)))
         ).filter((e): e is Entity => Boolean(e));
-        const relRecords = await Promise.all(
-          current.rels.map((id) => storage.getRelationships(id))
-        );
-        const flatRels = relRecords.flat().map(recToRelationship);
         return {
           entities,
-          relationships: flatRels,
+          relationships: current.rels,
         };
       }
 
@@ -160,7 +156,7 @@ export class KnowledgeGraph {
           queue.push({
             entityId: entity.id,
             path: [...current.path, entity.id],
-            rels: [...current.rels, relationship.id],
+            rels: [...current.rels, relationship],
           });
         }
       }
