@@ -55,6 +55,13 @@ export interface MemoryMetadata {
   lastRefreshedAt?: Date;
   /** mental-model source query */
   sourceQuery?: string;
+  /** tiered-consolidation tier: working|episodic|semantic|procedural|archived-* */
+  tier?: string;
+  /** tier transitions */
+  archivedAt?: Date;
+  /** procedural detection metadata */
+  occurrences?: number;
+  toolSequence?: string[];
   /** consolidation freshness */
   freshness?: 'new' | 'strengthening' | 'stable' | 'weakening' | 'stale';
   evidenceCount?: number;

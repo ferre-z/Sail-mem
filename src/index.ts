@@ -123,6 +123,13 @@ export type {
 export { ContradictionDetector } from './core/contradiction-detector.js';
 export type { Contradiction, ContradictionDeps } from './core/contradiction-detector.js';
 
+// 4-tier consolidation (working -> episodic -> semantic -> procedural)
+export { TieredConsolidation } from './core/tiered-consolidation.js';
+export type {
+  MemoryTier,
+  TieredCompressionResult,
+} from './core/tiered-consolidation.js';
+
 // MCP server (industry-standard agent tool surface)
 export {
   SailMemMcpServer,
