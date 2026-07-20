@@ -1,9 +1,9 @@
-import { sql } from 'drizzle-orm';
-import { getDb } from '../db/connection.js';
+import type { IStorage, ScoredMemory } from '../storage/types.js';
 import { SearchResult } from './search-engine.js';
 import { EmbeddingProvider } from '../embeddings/embedder.js';
 import { LocalEmbedder } from '../embeddings/local.js';
 import { ValidationError } from '../errors.js';
+import { createStorage } from '../storage/factory.js';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -14,17 +14,23 @@ function assertValidBankId(bankId: string): void {
 }
 
 export interface SemanticSearchDeps {
-  db?: ReturnType<typeof getDb>;
+  storage?: IStorage;
   embedder?: EmbeddingProvider;
 }
 
 export class SemanticSearch {
-  private db: ReturnType<typeof getDb>;
+  private storage?: IStorage;
   private embedder: EmbeddingProvider;
 
   constructor(deps: SemanticSearchDeps = {}) {
-    this.db = deps.db ?? getDb();
+    this.storage = deps.storage;
     this.embedder = deps.embedder ?? new LocalEmbedder();
+  }
+
+  private async useStorage(): Promise<IStorage> {
+    if (this.storage) return this.storage;
+    this.storage = await createStorage({ provider: 'sqlite' });
+    return this.storage;
   }
 
   async initialize(): Promise<void> {
@@ -36,44 +42,17 @@ export class SemanticSearch {
   async search(bankId: string, query: string, limit: number): Promise<SearchResult[]> {
     assertValidBankId(bankId);
     if (!query || query.trim().length === 0) return [];
-    if (!Number.isFinite(limit) || limit < 1) limit = 10;
-    if (limit > 1000) limit = 1000;
 
     const queryEmbedding = await this.embedder.embed(query);
+    const storage = await this.useStorage();
+    const scored: ScoredMemory[] = await storage.semanticSearch(bankId, queryEmbedding, {
+      limit,
+    });
 
-    const results = await this.db.execute(sql`
-      SELECT *,
-        1 - (embedding <=> ${JSON.stringify(queryEmbedding)}::vector) as similarity
-      FROM memories
-      WHERE bank_id = ${bankId}
-        AND embedding IS NOT NULL
-      ORDER BY similarity DESC
-      LIMIT ${limit}
-    `);
-
-    return results.map((row: any) => ({
-      memory: this.mapToMemory(row),
-      score: row.similarity,
+    return scored.map((s) => ({
+      memory: s.memory,
+      score: s.score,
       strategy: 'semantic',
     }));
-  }
-
-  private mapToMemory(row: any): any {
-    return {
-      id: row.id,
-      bankId: row.bank_id,
-      type: row.type,
-      content: row.content,
-      embedding: row.embedding,
-      metadata: row.metadata || {},
-      sourceId: row.source_id,
-      parentId: row.parent_id,
-      confidence: row.confidence,
-      accessCount: row.access_count,
-      lastAccessedAt: row.last_accessed_at,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-      expiresAt: row.expires_at,
-    };
   }
 }

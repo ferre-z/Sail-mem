@@ -1,7 +1,7 @@
-import { sql, SQL } from 'drizzle-orm';
-import { getDb } from '../db/connection.js';
+import type { IStorage, ScoredMemory } from '../storage/types.js';
 import { SearchResult } from './search-engine.js';
 import { ValidationError } from '../errors.js';
+import { createStorage } from '../storage/factory.js';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -11,85 +11,60 @@ function assertValidBankId(bankId: string): void {
   }
 }
 
+const TEMPORAL_KEYWORDS: Array<{
+  trigger: RegExp;
+  recency: 'hour' | 'day' | 'week' | 'month' | 'year';
+}> = [
+  { trigger: /\b(today|recent(ly)?|now|just)\b/i, recency: 'day' },
+  { trigger: /\b(last|this)\s+hour\b/i, recency: 'hour' },
+  { trigger: /\b(last|this)\s+(week|7\s*days)\b/i, recency: 'week' },
+  { trigger: /\b(last|this)\s+(month|30\s*days)\b/i, recency: 'month' },
+  { trigger: /\b(last|this)\s+(year|365\s*days|12\s*months)\b/i, recency: 'year' },
+];
+
 export interface TemporalSearchDeps {
-  db?: ReturnType<typeof getDb>;
+  storage?: IStorage;
 }
 
 export class TemporalSearch {
-  private db: ReturnType<typeof getDb>;
+  private storage?: IStorage;
 
   constructor(deps: TemporalSearchDeps = {}) {
-    this.db = deps.db ?? getDb();
+    this.storage = deps.storage;
+  }
+
+  private async useStorage(): Promise<IStorage> {
+    if (this.storage) return this.storage;
+    this.storage = await createStorage({ provider: 'sqlite' });
+    return this.storage;
   }
 
   async initialize(): Promise<void> {}
 
   async search(bankId: string, query: string, limit: number): Promise<SearchResult[]> {
     assertValidBankId(bankId);
-    if (!Number.isFinite(limit) || limit < 1) limit = 10;
-    if (limit > 1000) limit = 1000;
+    const storage = await this.useStorage();
 
-    const temporalCondition = this.parseTemporalCondition(query);
+    const recency = this.parseQueryRecency(query);
+    const scored: ScoredMemory[] = await storage.temporalSearch(bankId, {
+      recency,
+      limit,
+    });
 
-    const results = await this.db.execute(sql`
-      SELECT *,
-        CASE
-          WHEN created_at > NOW() - INTERVAL '1 day' THEN 1.0
-          WHEN created_at > NOW() - INTERVAL '1 week' THEN 0.8
-          WHEN created_at > NOW() - INTERVAL '1 month' THEN 0.6
-          WHEN created_at > NOW() - INTERVAL '1 year' THEN 0.4
-          ELSE 0.2
-        END as temporal_score
-      FROM memories
-      WHERE bank_id = ${bankId}
-        ${temporalCondition ?? sql``}
-      ORDER BY temporal_score DESC, created_at DESC
-      LIMIT ${limit}
-    `);
-
-    return results.map((row: any) => ({
-      memory: this.mapToMemory(row),
-      score: row.temporal_score,
+    return scored.map((s) => ({
+      memory: s.memory,
+      score: s.score,
       strategy: 'temporal',
-      metadata: { parsedTemporal: Boolean(temporalCondition) },
+      metadata: { parsedRecency: recency },
     }));
   }
 
-  private parseTemporalCondition(query: string): SQL | undefined {
-    const lowerQuery = query.toLowerCase();
-
-    if (lowerQuery.includes('today') || lowerQuery.includes('recent')) {
-      return sql`AND created_at > NOW() - INTERVAL '1 day'`;
+  private parseQueryRecency(
+    query: string
+  ): 'hour' | 'day' | 'week' | 'month' | 'year' | 'any' {
+    for (const { trigger, recency } of TEMPORAL_KEYWORDS) {
+      if (trigger.test(query)) return recency;
     }
-    if (lowerQuery.includes('this week') || lowerQuery.includes('last week')) {
-      return sql`AND created_at > NOW() - INTERVAL '1 week'`;
-    }
-    if (lowerQuery.includes('this month') || lowerQuery.includes('last month')) {
-      return sql`AND created_at > NOW() - INTERVAL '1 month'`;
-    }
-    if (lowerQuery.includes('this year') || lowerQuery.includes('last year')) {
-      return sql`AND created_at > NOW() - INTERVAL '1 year'`;
-    }
-
-    return undefined;
-  }
-
-  private mapToMemory(row: any): any {
-    return {
-      id: row.id,
-      bankId: row.bank_id,
-      type: row.type,
-      content: row.content,
-      embedding: row.embedding,
-      metadata: row.metadata || {},
-      sourceId: row.source_id,
-      parentId: row.parent_id,
-      confidence: row.confidence,
-      accessCount: row.access_count,
-      lastAccessedAt: row.last_accessed_at,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-      expiresAt: row.expires_at,
-    };
+    return 'any';
   }
 }

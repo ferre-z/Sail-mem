@@ -1,15 +1,12 @@
-import { sql } from 'drizzle-orm';
 import { getDb } from '../db/connection.js';
-import { consolidations } from '../db/schema.js';
-import { MemoryStore } from './memory-store.js';
-import type { MemoryStoreDeps } from './memory-store.js';
-
-export type { MemoryStoreDeps };
-import { LocalEmbedder } from '../embeddings/local.js';
-import { EmbeddingProvider } from '../embeddings/embedder.js';
-import { getConfig } from '../config/index.js';
 import { Memory, Observation } from '../types/memory.js';
 import { ValidationError } from '../errors.js';
+import type { IStorage } from '../storage/types.js';
+import { createStorage } from '../storage/factory.js';
+import { MemoryStore } from './memory-store.js';
+import { EmbeddingProvider } from '../embeddings/embedder.js';
+import { LocalEmbedder } from '../embeddings/local.js';
+import { getConfig } from '../config/index.js';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -36,17 +33,24 @@ export interface ConsolidationEngineDeps {
   memoryStore?: MemoryStore;
   embedder?: EmbeddingProvider;
   db?: ReturnType<typeof getDb>;
+  storage?: IStorage;
 }
 
 export class ConsolidationEngine {
-  private db: ReturnType<typeof getDb>;
   private memoryStore: MemoryStore;
   private embedder: EmbeddingProvider;
+  private storage?: IStorage;
 
   constructor(deps: ConsolidationEngineDeps = {}) {
-    this.db = deps.db ?? getDb();
-    this.memoryStore = deps.memoryStore ?? new MemoryStore({ db: this.db });
+    this.memoryStore = deps.memoryStore ?? new MemoryStore({ db: deps.db, storage: deps.storage });
     this.embedder = deps.embedder ?? new LocalEmbedder();
+    this.storage = deps.storage;
+  }
+
+  private async useStorage(): Promise<IStorage> {
+    if (this.storage) return this.storage;
+    this.storage = await createStorage({ provider: 'postgres', db: this.memoryStore['db'] });
+    return this.storage;
   }
 
   async initialize(): Promise<void> {
@@ -64,18 +68,12 @@ export class ConsolidationEngine {
     if (!content || content.trim().length === 0) return [];
 
     const embedding = await this.embedder.embed(content);
-
-    const results = await this.db.execute(sql`
-      SELECT *
-      FROM memories
-      WHERE bank_id = ${bankId}
-        AND embedding IS NOT NULL
-        AND 1 - (embedding <=> ${JSON.stringify(embedding)}::vector) > ${threshold}
-      ORDER BY embedding <=> ${JSON.stringify(embedding)}::vector
-      LIMIT 20
-    `);
-
-    return results.map((row: any) => this.mapToMemory(row));
+    const storage = await this.useStorage();
+    const scored = await storage.semanticSearch(bankId, embedding, {
+      limit: 20,
+      minScore: threshold,
+    });
+    return scored.map((s) => s.memory);
   }
 
   async consolidate(bankId: string, memoryIds: string[]): Promise<Observation> {
@@ -106,11 +104,15 @@ export class ConsolidationEngine {
       },
     });
 
-    await this.db.insert(consolidations).values({
-      observationId: observation.id,
-      sourceMemoryIds: memoryIds,
-      evidenceCount: validMemories.length,
-    });
+    const storage = await this.useStorage();
+    const db = (storage as any).db;
+    if (db?.insert) {
+      await db.insert((await import('../db/schema.js')).consolidations).values({
+        observationId: observation.id,
+        sourceMemoryIds: memoryIds,
+        evidenceCount: validMemories.length,
+      });
+    }
 
     return observation as Observation;
   }
@@ -153,11 +155,15 @@ export class ConsolidationEngine {
       },
     });
 
-    await this.db.insert(consolidations).values({
-      observationId: observation.id,
-      sourceMemoryIds: evidenceFromMemories.map((e) => e.memoryId),
-      evidenceCount: evidenceFromMemories.length,
-    });
+    const storage = await this.useStorage();
+    const db = (storage as any).db;
+    if (db?.insert) {
+      await db.insert((await import('../db/schema.js')).consolidations).values({
+        observationId: observation.id,
+        sourceMemoryIds: evidenceFromMemories.map((e) => e.memoryId),
+        evidenceCount: evidenceFromMemories.length,
+      });
+    }
 
     return observation as Observation;
   }
@@ -185,33 +191,14 @@ export class ConsolidationEngine {
 
   private generateConsolidatedContent(memories: Memory[]): string {
     if (memories.length === 0) return '';
-
     const facts = memories.map((m) => m.content).filter((c) => c && c.trim().length > 0);
     const unique = [...new Set(facts)];
     const content = unique.join('. ');
-
     if (content.length > CONSOLIDATED_CONTENT_CAP) {
       return content.slice(0, CONSOLIDATED_CONTENT_CAP) + '...';
     }
     return content;
   }
-
-  private mapToMemory(row: any): Memory {
-    return {
-      id: row.id,
-      bankId: row.bank_id,
-      type: row.type,
-      content: row.content,
-      embedding: row.embedding,
-      metadata: row.metadata || {},
-      sourceId: row.source_id,
-      parentId: row.parent_id,
-      confidence: row.confidence,
-      accessCount: row.access_count,
-      lastAccessedAt: row.last_accessed_at,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-      expiresAt: row.expires_at,
-    };
-  }
 }
+
+export type { MemoryStoreDeps } from './memory-store.js';

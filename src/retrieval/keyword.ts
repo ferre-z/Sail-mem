@@ -1,7 +1,7 @@
-import { sql } from 'drizzle-orm';
-import { getDb } from '../db/connection.js';
+import type { IStorage, ScoredMemory } from '../storage/types.js';
 import { SearchResult } from './search-engine.js';
 import { ValidationError } from '../errors.js';
+import { createStorage } from '../storage/factory.js';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -11,67 +11,35 @@ function assertValidBankId(bankId: string): void {
   }
 }
 
-function sanitizeFtsQuery(query: string): string {
-  return query
-    .replace(/[\\'`";&|(){}!*<>=]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, 1000);
-}
-
 export interface KeywordSearchDeps {
-  db?: ReturnType<typeof getDb>;
+  storage?: IStorage;
 }
 
 export class KeywordSearch {
-  private db: ReturnType<typeof getDb>;
+  private storage?: IStorage;
 
   constructor(deps: KeywordSearchDeps = {}) {
-    this.db = deps.db ?? getDb();
+    this.storage = deps.storage;
+  }
+
+  private async useStorage(): Promise<IStorage> {
+    if (this.storage) return this.storage;
+    this.storage = await createStorage({ provider: 'sqlite' });
+    return this.storage;
   }
 
   async initialize(): Promise<void> {}
 
   async search(bankId: string, query: string, limit: number): Promise<SearchResult[]> {
     assertValidBankId(bankId);
-    const safeQuery = sanitizeFtsQuery(query);
-    if (safeQuery.length === 0) return [];
-    if (!Number.isFinite(limit) || limit < 1) limit = 10;
-    if (limit > 1000) limit = 1000;
+    if (!query || query.trim().length === 0) return [];
+    const storage = await this.useStorage();
+    const scored: ScoredMemory[] = await storage.fullTextSearch(bankId, query, { limit });
 
-    const results = await this.db.execute(sql`
-      SELECT *,
-        ts_rank_cd(to_tsvector('english', content), plainto_tsquery('english', ${safeQuery})) as rank
-      FROM memories
-      WHERE bank_id = ${bankId}
-        AND to_tsvector('english', content) @@ plainto_tsquery('english', ${safeQuery})
-      ORDER BY rank DESC
-      LIMIT ${limit}
-    `);
-
-    return results.map((row: any) => ({
-      memory: this.mapToMemory(row),
-      score: row.rank,
+    return scored.map((s) => ({
+      memory: s.memory,
+      score: s.score,
       strategy: 'keyword',
     }));
-  }
-
-  private mapToMemory(row: any): any {
-    return {
-      id: row.id,
-      bankId: row.bank_id,
-      type: row.type,
-      content: row.content,
-      embedding: row.embedding,
-      metadata: row.metadata || {},
-      sourceId: row.source_id,
-      parentId: row.parent_id,
-      confidence: row.confidence,
-      accessCount: row.access_count,
-      lastAccessedAt: row.last_accessed_at,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-      expiresAt: row.expires_at,
-    };
   }
 }
