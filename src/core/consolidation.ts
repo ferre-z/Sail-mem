@@ -2,22 +2,27 @@ import { sql } from 'drizzle-orm';
 import { getDb } from '../db/connection.js';
 import { consolidations } from '../db/schema.js';
 import { MemoryStore } from './memory-store.js';
+import type { MemoryStoreDeps } from './memory-store.js';
+
+export type { MemoryStoreDeps };
 import { LocalEmbedder } from '../embeddings/local.js';
+import { EmbeddingProvider } from '../embeddings/embedder.js';
 import { getConfig } from '../config/index.js';
 import { Memory, Observation } from '../types/memory.js';
+import { ValidationError } from '../errors.js';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function assertValidBankId(bankId: string): void {
   if (!UUID_RE.test(bankId)) {
-    throw new Error(`Invalid bankId: ${bankId}`);
+    throw new ValidationError(`Invalid bankId: ${bankId}`);
   }
 }
 
 function assertSameBank(memories: Memory[], bankId: string): void {
   for (const m of memories) {
     if (m.bankId !== bankId) {
-      throw new Error(
+      throw new ValidationError(
         `Memory ${m.id} belongs to bank ${m.bankId}, not ${bankId}. ` +
         `Cross-bank consolidation is not permitted.`
       );
@@ -25,18 +30,29 @@ function assertSameBank(memories: Memory[], bankId: string): void {
   }
 }
 
-export class ConsolidationEngine {
-  private db = getDb();
-  private memoryStore: MemoryStore;
-  private embedder: LocalEmbedder;
+const CONSOLIDATED_CONTENT_CAP = 10_000;
 
-  constructor() {
-    this.memoryStore = new MemoryStore();
-    this.embedder = new LocalEmbedder();
+export interface ConsolidationEngineDeps {
+  memoryStore?: MemoryStore;
+  embedder?: EmbeddingProvider;
+  db?: ReturnType<typeof getDb>;
+}
+
+export class ConsolidationEngine {
+  private db: ReturnType<typeof getDb>;
+  private memoryStore: MemoryStore;
+  private embedder: EmbeddingProvider;
+
+  constructor(deps: ConsolidationEngineDeps = {}) {
+    this.db = deps.db ?? getDb();
+    this.memoryStore = deps.memoryStore ?? new MemoryStore({ db: this.db });
+    this.embedder = deps.embedder ?? new LocalEmbedder();
   }
 
   async initialize(): Promise<void> {
-    await this.embedder.initialize();
+    if (this.embedder.initialize) {
+      await this.embedder.initialize();
+    }
   }
 
   async findSimilarMemories(
@@ -45,9 +61,8 @@ export class ConsolidationEngine {
     threshold = getConfig().consolidation.similarityThreshold
   ): Promise<Memory[]> {
     assertValidBankId(bankId);
-    if (!content || content.trim().length === 0) {
-      return [];
-    }
+    if (!content || content.trim().length === 0) return [];
+
     const embedding = await this.embedder.embed(content);
 
     const results = await this.db.execute(sql`
@@ -66,14 +81,13 @@ export class ConsolidationEngine {
   async consolidate(bankId: string, memoryIds: string[]): Promise<Observation> {
     assertValidBankId(bankId);
     if (!Array.isArray(memoryIds) || memoryIds.length === 0) {
-      throw new Error('memoryIds must be a non-empty array');
+      throw new ValidationError('memoryIds must be a non-empty array');
     }
 
     const memories = await Promise.all(memoryIds.map((id) => this.memoryStore.getById(id)));
-
     const validMemories = memories.filter(Boolean) as Memory[];
     if (validMemories.length === 0) {
-      throw new Error('No valid memories found for consolidation');
+      throw new ValidationError('No valid memories found for consolidation');
     }
     assertSameBank(validMemories, bankId);
 
@@ -107,7 +121,7 @@ export class ConsolidationEngine {
   ): Promise<Observation> {
     assertValidBankId(bankId);
     if (!Array.isArray(evidence) || evidence.length === 0) {
-      throw new Error('evidence must be a non-empty array');
+      throw new ValidationError('evidence must be a non-empty array');
     }
 
     const validMemories = (
@@ -126,7 +140,7 @@ export class ConsolidationEngine {
       .join('. ');
 
     if (consolidatedContent.length === 0) {
-      throw new Error('Cannot consolidate memories with empty content');
+      throw new ValidationError('Cannot consolidate memories with empty content');
     }
 
     const observation = await this.memoryStore.create({
@@ -176,8 +190,8 @@ export class ConsolidationEngine {
     const unique = [...new Set(facts)];
     const content = unique.join('. ');
 
-    if (content.length > 10_000) {
-      return content.slice(0, 10_000) + '...';
+    if (content.length > CONSOLIDATED_CONTENT_CAP) {
+      return content.slice(0, CONSOLIDATED_CONTENT_CAP) + '...';
     }
     return content;
   }

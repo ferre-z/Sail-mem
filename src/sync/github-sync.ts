@@ -6,6 +6,7 @@ import { getConfig } from '../config/index.js';
 import { MemoryStore } from '../core/memory-store.js';
 import { BankManager } from '../core/bank-manager.js';
 import { createSnapshot, MemorySnapshot } from './snapshot.js';
+import { SyncError, ValidationError } from '../errors.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -14,13 +15,13 @@ const GIT_HASH_RE = /^[a-f0-9]{7,40}$/i;
 
 function assertValidBankId(bankId: string): void {
   if (!UUID_RE.test(bankId)) {
-    throw new Error(`Invalid bankId: must be a UUID`);
+    throw new ValidationError(`Invalid bankId: ${bankId}`);
   }
 }
 
 function assertValidHash(hash: string): void {
   if (!GIT_HASH_RE.test(hash)) {
-    throw new Error(`Invalid git hash: ${hash}`);
+    throw new ValidationError(`Invalid git hash: ${hash}`);
   }
 }
 
@@ -34,15 +35,24 @@ function sanitizeCommitMessage(message: string): string {
   return message.replace(/[\x00-\x1f\x7f"\\`$]/g, '').slice(0, 200);
 }
 
+export interface GitHubSyncDeps {
+  memoryStore?: MemoryStore;
+  bankManager?: BankManager;
+  repoPath?: string;
+  exec?: typeof execFileAsync;
+}
+
 export class GitHubSync {
   private memoryStore: MemoryStore;
   private bankManager: BankManager;
   private repoPath: string;
+  private exec: typeof execFileAsync;
 
-  constructor() {
-    this.memoryStore = new MemoryStore();
-    this.bankManager = new BankManager();
-    this.repoPath = getConfig().sync.repoPath;
+  constructor(deps: GitHubSyncDeps = {}) {
+    this.memoryStore = deps.memoryStore ?? new MemoryStore();
+    this.bankManager = deps.bankManager ?? new BankManager();
+    this.repoPath = deps.repoPath ?? getConfig().sync.repoPath;
+    this.exec = deps.exec ?? execFileAsync;
   }
 
   async initialize(): Promise<void> {
@@ -51,8 +61,8 @@ export class GitHubSync {
     try {
       await access(join(this.repoPath, '.git'));
     } catch {
-      await execFileAsync('git', ['init'], { cwd: this.repoPath });
-      await execFileAsync('git', ['checkout', '-b', 'main'], { cwd: this.repoPath });
+      await this.exec('git', ['init'], { cwd: this.repoPath });
+      await this.exec('git', ['checkout', '-b', 'main'], { cwd: this.repoPath });
     }
   }
 
@@ -100,15 +110,15 @@ export class GitHubSync {
     const json = await this.exportMemories(bankId);
     await writeFile(snapshotFile, json);
 
-    await execFileAsync('git', ['add', '-A'], { cwd: this.repoPath });
+    await this.exec('git', ['add', '-A'], { cwd: this.repoPath });
 
     const commitMessage = sanitizeCommitMessage(
       message || `${config.commitMessage} - ${bankId}`
     );
 
-    await execFileAsync('git', ['commit', '-m', commitMessage], { cwd: this.repoPath });
+    await this.exec('git', ['commit', '-m', commitMessage], { cwd: this.repoPath });
 
-    const { stdout } = await execFileAsync('git', ['rev-parse', 'HEAD'], {
+    const { stdout } = await this.exec('git', ['rev-parse', 'HEAD'], {
       cwd: this.repoPath,
     });
     return stdout.trim();
@@ -116,22 +126,24 @@ export class GitHubSync {
 
   async pull(): Promise<void> {
     try {
-      await execFileAsync('git', ['pull', 'origin', 'main'], { cwd: this.repoPath });
+      await this.exec('git', ['pull', 'origin', 'main'], { cwd: this.repoPath });
     } catch (err) {
-      throw new Error(
+      throw new SyncError(
         `Failed to pull from origin: ${(err as Error).message}. ` +
-        `Ensure a remote is configured.`
+        `Ensure a remote is configured.`,
+        err
       );
     }
   }
 
   async push(): Promise<void> {
     try {
-      await execFileAsync('git', ['push', 'origin', 'main'], { cwd: this.repoPath });
+      await this.exec('git', ['push', 'origin', 'main'], { cwd: this.repoPath });
     } catch (err) {
-      throw new Error(
+      throw new SyncError(
         `Failed to push to origin: ${(err as Error).message}. ` +
-        `Ensure a remote is configured and you have push access.`
+        `Ensure a remote is configured and you have push access.`,
+        err
       );
     }
   }
@@ -146,17 +158,11 @@ export class GitHubSync {
   async getHistory(
     bankId: string,
     limit = 10
-  ): Promise<
-    Array<{
-      hash: string;
-      message: string;
-      date: string;
-    }>
-  > {
+  ): Promise<Array<{ hash: string; message: string; date: string }>> {
     assertValidBankId(bankId);
     const safeLimit = clampLimit(limit);
 
-    const { stdout } = await execFileAsync(
+    const { stdout } = await this.exec(
       'git',
       ['log', '--oneline', `-${safeLimit}`, '--', `${bankId}.json`],
       { cwd: this.repoPath }
@@ -180,11 +186,9 @@ export class GitHubSync {
     assertValidBankId(bankId);
     assertValidHash(hash);
 
-    await execFileAsync(
-      'git',
-      ['checkout', hash, '--', `${bankId}.json`],
-      { cwd: this.repoPath }
-    );
+    await this.exec('git', ['checkout', hash, '--', `${bankId}.json`], {
+      cwd: this.repoPath,
+    });
     const json = await readFile(join(this.repoPath, `${bankId}.json`), 'utf-8');
     await this.importMemories(json);
   }

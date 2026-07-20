@@ -1,6 +1,15 @@
 import { eq, and } from 'drizzle-orm';
 import { getDb } from '../db/connection.js';
 import { entities, relationships, memoryEntities } from '../db/schema.js';
+import { NotFoundError, ValidationError } from '../errors.js';
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function assertUuid(value: string, name: string): void {
+  if (!UUID_RE.test(value)) {
+    throw new ValidationError(`Invalid ${name}: ${value}`);
+  }
+}
 
 export interface Entity {
   id: string;
@@ -28,8 +37,16 @@ export interface ConnectedEntity {
   direction: 'outgoing' | 'incoming';
 }
 
+export interface KnowledgeGraphDeps {
+  db?: ReturnType<typeof getDb>;
+}
+
 export class KnowledgeGraph {
-  private db = getDb();
+  private db: ReturnType<typeof getDb>;
+
+  constructor(deps: KnowledgeGraphDeps = {}) {
+    this.db = deps.db ?? getDb();
+  }
 
   async createEntity(input: {
     bankId: string;
@@ -38,6 +55,14 @@ export class KnowledgeGraph {
     properties?: Record<string, unknown>;
     embedding?: number[];
   }): Promise<Entity> {
+    assertUuid(input.bankId, 'bankId');
+    if (!input.name || input.name.trim().length === 0) {
+      throw new ValidationError('Entity name cannot be empty');
+    }
+    if (!input.type || input.type.trim().length === 0) {
+      throw new ValidationError('Entity type cannot be empty');
+    }
+
     const [result] = await this.db
       .insert(entities)
       .values({
@@ -53,11 +78,21 @@ export class KnowledgeGraph {
   }
 
   async getEntity(id: string): Promise<Entity | null> {
+    assertUuid(id, 'entityId');
     const [result] = await this.db.select().from(entities).where(eq(entities.id, id));
     return result ? this.mapToEntity(result) : null;
   }
 
+  async getEntityOrThrow(id: string): Promise<Entity> {
+    const entity = await this.getEntity(id);
+    if (!entity) throw new NotFoundError('Entity', id);
+    return entity;
+  }
+
   async findEntityByName(name: string, bankId: string): Promise<Entity | null> {
+    if (!name) throw new ValidationError('Entity name cannot be empty');
+    assertUuid(bankId, 'bankId');
+
     const [result] = await this.db
       .select()
       .from(entities)
@@ -72,6 +107,13 @@ export class KnowledgeGraph {
     properties?: Record<string, unknown>;
     weight?: number;
   }): Promise<Relationship> {
+    assertUuid(input.sourceId, 'sourceId');
+    assertUuid(input.targetId, 'targetId');
+    if (input.sourceId === input.targetId) {
+      throw new ValidationError('Self-referential relationships are not allowed');
+    }
+    if (!input.type) throw new ValidationError('Relationship type cannot be empty');
+
     const [result] = await this.db
       .insert(relationships)
       .values({
@@ -87,7 +129,8 @@ export class KnowledgeGraph {
   }
 
   async getConnectedEntities(entityId: string): Promise<ConnectedEntity[]> {
-    // Outgoing relationships
+    assertUuid(entityId, 'entityId');
+
     const outgoing = await this.db
       .select({
         relationship: relationships,
@@ -97,7 +140,6 @@ export class KnowledgeGraph {
       .innerJoin(entities, eq(relationships.targetId, entities.id))
       .where(eq(relationships.sourceId, entityId));
 
-    // Incoming relationships
     const incoming = await this.db
       .select({
         relationship: relationships,
@@ -132,11 +174,11 @@ export class KnowledgeGraph {
     sourceId: string,
     targetId: string,
     maxDepth = 5
-  ): Promise<{
-    entities: Entity[];
-    relationships: Relationship[];
-  } | null> {
-    // BFS to find shortest path
+  ): Promise<{ entities: Entity[]; relationships: Relationship[] } | null> {
+    assertUuid(sourceId, 'sourceId');
+    assertUuid(targetId, 'targetId');
+    const safeDepth = Math.max(1, Math.min(maxDepth, 12));
+
     const queue: Array<{ entityId: string; path: string[]; rels: string[] }> = [
       { entityId: sourceId, path: [sourceId], rels: [] },
     ];
@@ -159,7 +201,7 @@ export class KnowledgeGraph {
         };
       }
 
-      if (current.path.length > maxDepth) continue;
+      if (current.path.length > safeDepth) continue;
 
       const connected = await this.getConnectedEntities(current.entityId);
       for (const { entity, relationship } of connected) {
@@ -178,10 +220,13 @@ export class KnowledgeGraph {
   }
 
   async linkMemoryToEntity(memoryId: string, entityId: string): Promise<void> {
+    assertUuid(memoryId, 'memoryId');
+    assertUuid(entityId, 'entityId');
     await this.db.insert(memoryEntities).values({ memoryId, entityId });
   }
 
   async getEntitiesForMemory(memoryId: string): Promise<Entity[]> {
+    assertUuid(memoryId, 'memoryId');
     const results = await this.db
       .select({ entity: entities })
       .from(memoryEntities)
@@ -192,7 +237,11 @@ export class KnowledgeGraph {
   }
 
   private async getRelationship(id: string): Promise<Relationship | null> {
-    const [result] = await this.db.select().from(relationships).where(eq(relationships.id, id));
+    assertUuid(id, 'relationshipId');
+    const [result] = await this.db
+      .select()
+      .from(relationships)
+      .where(eq(relationships.id, id));
     return result ? this.mapToRelationship(result) : null;
   }
 

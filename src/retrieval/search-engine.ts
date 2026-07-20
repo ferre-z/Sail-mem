@@ -1,9 +1,24 @@
 import { SemanticSearch } from './semantic.js';
+import type { SemanticSearchDeps } from './semantic.js';
 import { KeywordSearch } from './keyword.js';
+import type { KeywordSearchDeps } from './keyword.js';
 import { GraphSearch } from './graph.js';
+import type { GraphSearchDeps } from './graph.js';
 import { TemporalSearch } from './temporal-search.js';
+import type { TemporalSearchDeps } from './temporal-search.js';
 import { getConfig } from '../config/index.js';
 import { Memory } from '../types/memory.js';
+import { ValidationError } from '../errors.js';
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function assertValidBankId(bankId: string): void {
+  if (!UUID_RE.test(bankId)) {
+    throw new ValidationError(`Invalid bankId: ${bankId}`);
+  }
+}
+
+const DEFAULT_RRF_K = 60;
 
 export interface SearchOptions {
   strategies?: ('semantic' | 'keyword' | 'graph' | 'temporal')[];
@@ -23,17 +38,31 @@ export interface SearchResult {
   metadata?: Record<string, unknown>;
 }
 
+export interface SearchEngineDeps {
+  semantic?: SemanticSearch;
+  keyword?: KeywordSearch;
+  graph?: GraphSearch;
+  temporal?: TemporalSearch;
+}
+
+export type {
+  SemanticSearchDeps,
+  KeywordSearchDeps,
+  GraphSearchDeps,
+  TemporalSearchDeps,
+};
+
 export class SearchEngine {
   private semantic: SemanticSearch;
   private keyword: KeywordSearch;
   private graph: GraphSearch;
   private temporal: TemporalSearch;
 
-  constructor() {
-    this.semantic = new SemanticSearch();
-    this.keyword = new KeywordSearch();
-    this.graph = new GraphSearch();
-    this.temporal = new TemporalSearch();
+  constructor(deps: SearchEngineDeps = {}) {
+    this.semantic = deps.semantic ?? new SemanticSearch();
+    this.keyword = deps.keyword ?? new KeywordSearch();
+    this.graph = deps.graph ?? new GraphSearch();
+    this.temporal = deps.temporal ?? new TemporalSearch();
   }
 
   async initialize(): Promise<void> {
@@ -45,34 +74,23 @@ export class SearchEngine {
     ]);
   }
 
-  async search(bankId: string, query: string, options: SearchOptions = {}): Promise<SearchResult[]> {
+  async search(
+    bankId: string,
+    query: string,
+    options: SearchOptions = {}
+  ): Promise<SearchResult[]> {
+    assertValidBankId(bankId);
+    if (!query || query.trim().length === 0) return [];
+
     const config = getConfig().retrieval;
     const strategies = options.strategies || [...config.strategies];
-    const maxResults = options.maxResults || config.maxResults;
-    const minScore = options.minScore || config.minScore;
+    const maxResults = clampLimit(options.maxResults ?? config.maxResults);
+    const minScore = clampScore(options.minScore ?? config.minScore);
 
-    const results: SearchResult[] = [];
+    const strategyResults = await this.runStrategies(strategies, bankId, query, maxResults);
 
-    // Run strategies in parallel
-    const strategyPromises = strategies.map(async (strategy) => {
-      switch (strategy) {
-        case 'semantic':
-          return this.semantic.search(bankId, query, maxResults);
-        case 'keyword':
-          return this.keyword.search(bankId, query, maxResults);
-        case 'graph':
-          return this.graph.search(bankId, query, maxResults);
-        case 'temporal':
-          return this.temporal.search(bankId, query, maxResults);
-        default:
-          return [];
-      }
-    });
-
-    const strategyResults = await Promise.all(strategyPromises);
-
-    // Merge and deduplicate results
     const seen = new Set<string>();
+    const results: SearchResult[] = [];
     for (let i = 0; i < strategyResults.length; i++) {
       for (const result of strategyResults[i]) {
         if (!seen.has(result.memory.id) && result.score >= minScore) {
@@ -85,7 +103,6 @@ export class SearchEngine {
       }
     }
 
-    // Sort by score and limit
     return results.sort((a, b) => b.score - a.score).slice(0, maxResults);
   }
 
@@ -94,51 +111,47 @@ export class SearchEngine {
     query: string,
     options: SearchOptions = {}
   ): Promise<SearchResult[]> {
+    assertValidBankId(bankId);
+    if (!query || query.trim().length === 0) return [];
+
     const config = getConfig().retrieval;
     const strategies = options.strategies || [...config.strategies];
-    const maxResults = options.maxResults || config.maxResults;
+    const maxResults = clampLimit(options.maxResults ?? config.maxResults);
 
-    const allResults: Map<string, { memory: Memory; scores: Map<string, number> }> = new Map();
+    const allResults = new Map<
+      string,
+      { memory: Memory; scores: Map<string, number> }
+    >();
 
-    // Collect results from all strategies
-    for (const strategy of strategies) {
-      let results: SearchResult[] = [];
-      switch (strategy) {
-        case 'semantic':
-          results = await this.semantic.search(bankId, query, maxResults * 2);
-          break;
-        case 'keyword':
-          results = await this.keyword.search(bankId, query, maxResults * 2);
-          break;
-        case 'graph':
-          results = await this.graph.search(bankId, query, maxResults * 2);
-          break;
-        case 'temporal':
-          results = await this.temporal.search(bankId, query, maxResults * 2);
-          break;
-      }
+    const strategyResults = await this.runStrategies(
+      strategies,
+      bankId,
+      query,
+      maxResults * 2
+    );
 
+    for (let s = 0; s < strategyResults.length; s++) {
+      const strategyName = strategies[s];
+      const results = strategyResults[s];
       for (let rank = 0; rank < results.length; rank++) {
-        const existing = allResults.get(results[rank].memory.id);
+        const memoryId = results[rank].memory.id;
+        const existing = allResults.get(memoryId);
         if (existing) {
-          existing.scores.set(strategy, 1 / (rank + 1));
+          existing.scores.set(strategyName, 1 / (rank + 1));
         } else {
-          allResults.set(results[rank].memory.id, {
+          allResults.set(memoryId, {
             memory: results[rank].memory,
-            scores: new Map([[strategy, 1 / (rank + 1)]]),
+            scores: new Map([[strategyName, 1 / (rank + 1)]]),
           });
         }
       }
     }
 
-    // Calculate RRF score: sum of 1/(k + rank) for each strategy
-    const k = 60; // Standard RRF constant
     const finalResults: SearchResult[] = [];
-
     for (const [, { memory, scores }] of allResults) {
       let rrfScore = 0;
       for (const [, score] of scores) {
-        rrfScore += 1 / (k + 1 / score);
+        rrfScore += 1 / (DEFAULT_RRF_K + 1 / score);
       }
       finalResults.push({
         memory,
@@ -149,4 +162,40 @@ export class SearchEngine {
 
     return finalResults.sort((a, b) => b.score - a.score).slice(0, maxResults);
   }
+
+  private async runStrategies(
+    strategies: SearchOptions['strategies'] & string[],
+    bankId: string,
+    query: string,
+    limit: number
+  ): Promise<Array<SearchResult[]>> {
+    const runOne = async (strategy: string): Promise<SearchResult[]> => {
+      switch (strategy) {
+        case 'semantic':
+          return this.semantic.search(bankId, query, limit);
+        case 'keyword':
+          return this.keyword.search(bankId, query, limit);
+        case 'graph':
+          return this.graph.search(bankId, query, limit);
+        case 'temporal':
+          return this.temporal.search(bankId, query, limit);
+        default:
+          return [];
+      }
+    };
+    return Promise.all(strategies.map(runOne));
+  }
+}
+
+function clampLimit(value: number): number {
+  if (!Number.isFinite(value) || value < 1) return 10;
+  if (value > 1000) return 1000;
+  return Math.floor(value);
+}
+
+function clampScore(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  if (value < 0) return 0;
+  if (value > 1) return 1;
+  return value;
 }

@@ -1,18 +1,39 @@
 import { sql, SQL } from 'drizzle-orm';
 import { getDb } from '../db/connection.js';
 import { SearchResult } from './search-engine.js';
+import { ValidationError } from '../errors.js';
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function assertValidBankId(bankId: string): void {
+  if (!UUID_RE.test(bankId)) {
+    throw new ValidationError(`Invalid bankId: ${bankId}`);
+  }
+}
+
+export interface TemporalSearchDeps {
+  db?: ReturnType<typeof getDb>;
+}
 
 export class TemporalSearch {
-  private db = getDb();
+  private db: ReturnType<typeof getDb>;
+
+  constructor(deps: TemporalSearchDeps = {}) {
+    this.db = deps.db ?? getDb();
+  }
 
   async initialize(): Promise<void> {}
 
   async search(bankId: string, query: string, limit: number): Promise<SearchResult[]> {
+    assertValidBankId(bankId);
+    if (!Number.isFinite(limit) || limit < 1) limit = 10;
+    if (limit > 1000) limit = 1000;
+
     const temporalCondition = this.parseTemporalCondition(query);
 
     const results = await this.db.execute(sql`
       SELECT *,
-        CASE 
+        CASE
           WHEN created_at > NOW() - INTERVAL '1 day' THEN 1.0
           WHEN created_at > NOW() - INTERVAL '1 week' THEN 0.8
           WHEN created_at > NOW() - INTERVAL '1 month' THEN 0.6
@@ -21,7 +42,7 @@ export class TemporalSearch {
         END as temporal_score
       FROM memories
       WHERE bank_id = ${bankId}
-        ${temporalCondition}
+        ${temporalCondition ?? sql``}
       ORDER BY temporal_score DESC, created_at DESC
       LIMIT ${limit}
     `);
