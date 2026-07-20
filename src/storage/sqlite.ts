@@ -94,13 +94,14 @@ interface RelationshipRow {
 }
 
 function rowToMemory(r: MemoryRow): Memory {
+  const metadata = jsonParse<Record<string, unknown>>(r.metadata, {});
   return {
     id: r.id,
     bankId: r.bank_id,
     type: r.type as Memory['type'],
     content: r.content,
     embedding: r.embedding ? (jsonParse<number[]>(r.embedding, [])) : undefined,
-    metadata: jsonParse<Record<string, unknown>>(r.metadata, {}),
+    metadata: reviveDates(metadata) as any,
     sourceId: r.source_id ?? undefined,
     parentId: r.parent_id ?? undefined,
     confidence: r.confidence,
@@ -110,6 +111,23 @@ function rowToMemory(r: MemoryRow): Memory {
     updatedAt: new Date(r.updated_at),
     expiresAt: r.expires_at ? new Date(r.expires_at) : undefined,
   };
+}
+
+function reviveDates(value: unknown): unknown {
+  if (value === null || value === undefined) return value;
+  if (typeof value !== 'object') return value;
+  if (Array.isArray(value)) return value.map(reviveDates);
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?$/.test(v)) {
+      out[k] = new Date(v);
+    } else if (v && typeof v === 'object') {
+      out[k] = reviveDates(v);
+    } else {
+      out[k] = v;
+    }
+  }
+  return out;
 }
 
 function rowToBank(r: BankRow): Bank {
@@ -620,6 +638,15 @@ export class SQLiteStorage implements IStorage {
       .prepare('SELECT * FROM entities WHERE name = ? AND bank_id = ?')
       .get(name, bankId) as EntityRow | undefined;
     return row ? rowToEntity(row) : null;
+  }
+
+  async listEntitiesByBank(bankId: string, limit = 1000): Promise<EntityRecord[]> {
+    assertUuid(bankId, 'bankId');
+    const safeLimit = Math.max(1, Math.min(limit, 10_000));
+    const rows = this.db
+      .prepare('SELECT * FROM entities WHERE bank_id = ? ORDER BY created_at LIMIT ?')
+      .all(bankId, safeLimit) as EntityRow[];
+    return rows.map(rowToEntity);
   }
 
   async createRelationship(

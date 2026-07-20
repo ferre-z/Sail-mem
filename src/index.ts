@@ -104,6 +104,25 @@ export type {
   CycleResult,
 } from './core/consolidation-scheduler.js';
 
+// Mental models
+export { MentalModelEngine } from './core/mental-model.js';
+export type {
+  MentalModelRecord,
+  CreateMentalModelInput,
+  MentalModelEngineDeps,
+} from './core/mental-model.js';
+
+// Entity resolution
+export { EntityResolver } from './core/entity-resolver.js';
+export type {
+  ResolvedEntityMatch,
+  EntityResolverDeps,
+} from './core/entity-resolver.js';
+
+// Contradiction detection
+export { ContradictionDetector } from './core/contradiction-detector.js';
+export type { Contradiction, ContradictionDeps } from './core/contradiction-detector.js';
+
 // MCP server (industry-standard agent tool surface)
 export {
   SailMemMcpServer,

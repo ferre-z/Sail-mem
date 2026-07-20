@@ -51,6 +51,10 @@ export interface MemoryMetadata {
   lastUpdated?: Date;
   /** auto-capture metadata */
   sessionId?: string;
+  /** mental-model refresh timestamp */
+  lastRefreshedAt?: Date;
+  /** mental-model source query */
+  sourceQuery?: string;
   /** consolidation freshness */
   freshness?: 'new' | 'strengthening' | 'stable' | 'weakening' | 'stale';
   evidenceCount?: number;

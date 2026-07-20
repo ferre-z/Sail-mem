@@ -77,6 +77,12 @@ export class KnowledgeGraph {
     return storage.findEntityByName(name, bankId);
   }
 
+  async listEntitiesByBank(bankId: string, limit = 1000): Promise<Entity[]> {
+    assertUuid(bankId, 'bankId');
+    const storage = await this.useStorage();
+    return storage.listEntitiesByBank(bankId, limit);
+  }
+
   async createRelationship(input: {
     sourceId: string;
     targetId: string;

@@ -287,6 +287,17 @@ export class PostgresStorage implements IStorage {
     return row ? rowToEntity(row) : null;
   }
 
+  async listEntitiesByBank(bankId: string, limit = 1000): Promise<EntityRecord[]> {
+    assertUuid(bankId, 'bankId');
+    const safeLimit = Math.max(1, Math.min(limit, 10_000));
+    const rows = await this.db
+      .select()
+      .from(entitiesTable)
+      .where(eq(entitiesTable.bankId, bankId))
+      .limit(safeLimit);
+    return rows.map(rowToEntity);
+  }
+
   async createRelationship(
     input: CreateRelationshipInput
   ): Promise<RelationshipRecord> {

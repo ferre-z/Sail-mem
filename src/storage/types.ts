@@ -92,6 +92,7 @@ export interface IStorage {
   createEntity(input: CreateEntityInput): Promise<EntityRecord>;
   getEntity(id: string): Promise<EntityRecord | null>;
   findEntityByName(name: string, bankId: string): Promise<EntityRecord | null>;
+  listEntitiesByBank(bankId: string, limit?: number): Promise<EntityRecord[]>;
   createRelationship(input: CreateRelationshipInput): Promise<RelationshipRecord>;
   getRelationships(entityId: string): Promise<RelationshipRecord[]>;
   linkMemoryEntity(memoryId: string, entityId: string): Promise<void>;
